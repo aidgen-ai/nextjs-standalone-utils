@@ -20,6 +20,9 @@
   "dependencies": {
     "@vercel/nft": "^1.10.2"
   },
+  "devDependencies": {
+    "npm-check-updates": "^22.2.9"
+  },
   "keywords": [
     "nextjs",
     "standalone",
