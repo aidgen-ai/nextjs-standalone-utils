@@ -6,11 +6,15 @@
  * symlink layout on its own.
  *
  * Usage:
- *   copy-pnpm-symlinks <src_node_modules> <dst_node_modules>
+ *   copy-pnpm-symlinks [src_node_modules] [dst_node_modules]
  *
  * For every symlink directly under <src_node_modules> (including one level
  * into scoped @scope directories), if the link's target also exists relative
  * to <dst_node_modules>, the same symlink is (re)created there.
+ *
+ * Defaults:
+ *   - No args: src=node_modules, dst=.next/standalone/node_modules
+ *   - One arg: it's the dst dir, src=node_modules
  */
 
 import fs from 'node:fs';
@@ -20,11 +24,14 @@ import path from 'node:path';
 // CLI parsing
 // ---------------------------------------------------------------------------
 
-const [, , src, dst] = process.argv;
+let [, , src, dst] = process.argv;
 
-if (!src || !dst) {
-  console.error('Usage: copy-pnpm-symlinks <src_node_modules> <dst_node_modules>');
-  process.exit(1);
+if (src && !dst) {
+  dst = src;
+  src = 'node_modules';
+} else if (!src && !dst) {
+  src = 'node_modules';
+  dst = '.next/standalone/node_modules';
 }
 
 if (!fs.existsSync(src)) {
