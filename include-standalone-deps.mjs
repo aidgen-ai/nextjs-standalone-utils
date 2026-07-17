@@ -8,6 +8,16 @@
  *   include-standalone-deps [options] <path-or-glob> [<path-or-glob> ...]
  *
  * Each argument is auto-detected:
+ *   - "pkg:<name>[/<subpath-or-glob>]": resolves <name> via Node module
+ *     resolution (require.resolve(`<name>/package.json`) from --root),
+ *     following symlinks to the package's real on-disk directory — this
+ *     avoids hardcoding package-manager-specific store layouts (e.g. pnpm's
+ *     `.pnpm/@scope+name@<version>/node_modules/@scope/name`). With no
+ *     subpath, the whole resolved directory is copied (can be large for
+ *     big packages); with a subpath, it is classified using the same rules
+ *     as a literal path/glob below, resolved against the package directory.
+ *     Resolution fails if the package has no `./package.json` export (e.g.
+ *     a restrictive "exports" map) — use a literal node_modules path instead.
  *   - existing file (or symlink to one): resolved through .bin shims
  *     (pnpm cmd-shim or symlink) and traced with @vercel/nft; the shim or
  *     symlink itself is copied too
@@ -40,6 +50,7 @@
 import { nodeFileTrace } from '@vercel/nft';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
+import { createRequire } from 'node:module';
 import path from 'node:path';
 
 // ---------------------------------------------------------------------------
@@ -142,17 +153,12 @@ async function addFileEntrypoint(abs, label) {
   }
 }
 
-async function classifyInput(input) {
-  if (hasGlobMagic(input)) {
-    globs.push(input);
-    return;
-  }
-
-  const abs = path.resolve(root, input);
+/** Classify an already-resolved absolute path: directory, symlink, or regular file. */
+async function classifyAbsPath(abs, label) {
   const st = await fsp.lstat(abs).catch(() => null);
 
   if (!st) {
-    missing(`path not found: ${input}`);
+    missing(`path not found: ${label}`);
     return;
   }
 
@@ -164,7 +170,7 @@ async function classifyInput(input) {
   if (st.isSymbolicLink()) {
     const real = await fsp.realpath(abs).catch(() => null);
     if (!real) {
-      missing(`dangling symlink: ${input}`);
+      missing(`dangling symlink: ${label}`);
       return;
     }
     extraFiles.add(abs); // always copy the symlink itself
@@ -172,12 +178,64 @@ async function classifyInput(input) {
     if (rst.isDirectory()) {
       dirs.add(real);
     } else {
-      await addFileEntrypoint(real, input);
+      await addFileEntrypoint(real, label);
     }
     return;
   }
 
-  await addFileEntrypoint(abs, input);
+  await addFileEntrypoint(abs, label);
+}
+
+const PKG_PREFIX = 'pkg:';
+
+/** Split a `pkg:` specifier body into its package name and optional subpath. */
+function parsePkgSpecifier(spec) {
+  const segments = spec.split('/');
+  const pkgName = spec.startsWith('@') ? segments.slice(0, 2).join('/') : segments[0];
+  const subpath = spec.slice(pkgName.length).replace(/^\/+/, '');
+  return { pkgName, subpath };
+}
+
+let requireFromRoot;
+
+/** Resolve a package's real (symlink-free) directory via Node module resolution. */
+async function resolvePkgDir(pkgName) {
+  if (!requireFromRoot) requireFromRoot = createRequire(path.join(root, 'package.json'));
+  let pkgJsonPath;
+  try {
+    pkgJsonPath = requireFromRoot.resolve(`${pkgName}/package.json`);
+  } catch {
+    missing(
+      `could not resolve package.json of "${pkgName}" ` +
+        `(no main entry or restrictive "exports" map; use a literal node_modules path instead)`,
+    );
+    return null;
+  }
+  return fsp.realpath(path.dirname(pkgJsonPath));
+}
+
+async function classifyInput(input) {
+  if (input.startsWith(PKG_PREFIX)) {
+    const { pkgName, subpath } = parsePkgSpecifier(input.slice(PKG_PREFIX.length));
+    const pkgDir = await resolvePkgDir(pkgName);
+    if (!pkgDir) return; // missing() already reported (or warned, with --ignore-missing)
+
+    if (!subpath) {
+      dirs.add(pkgDir);
+    } else if (hasGlobMagic(subpath)) {
+      globs.push(path.join(path.relative(root, pkgDir), subpath));
+    } else {
+      await classifyAbsPath(path.join(pkgDir, subpath), input);
+    }
+    return;
+  }
+
+  if (hasGlobMagic(input)) {
+    globs.push(input);
+    return;
+  }
+
+  await classifyAbsPath(path.resolve(root, input), input);
 }
 
 // ---------------------------------------------------------------------------
