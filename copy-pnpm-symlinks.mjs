@@ -13,28 +13,28 @@
  * to <dst_node_modules>, the same symlink is (re)created there.
  */
 
-import fs from 'node:fs'
-import path from 'node:path'
+import fs from 'node:fs';
+import path from 'node:path';
 
 // ---------------------------------------------------------------------------
 // CLI parsing
 // ---------------------------------------------------------------------------
 
-const [, , src, dst] = process.argv
+const [, , src, dst] = process.argv;
 
 if (!src || !dst) {
-  console.error('Usage: copy-pnpm-symlinks <src_node_modules> <dst_node_modules>')
-  process.exit(1)
+  console.error('Usage: copy-pnpm-symlinks <src_node_modules> <dst_node_modules>');
+  process.exit(1);
 }
 
 if (!fs.existsSync(src)) {
-  console.error(`Source directory does not exist: ${src}`)
-  process.exit(1)
+  console.error(`Source directory does not exist: ${src}`);
+  process.exit(1);
 }
 
 if (!fs.existsSync(dst)) {
-  console.error(`Destination directory does not exist: ${dst}`)
-  process.exit(1)
+  console.error(`Destination directory does not exist: ${dst}`);
+  process.exit(1);
 }
 
 // ---------------------------------------------------------------------------
@@ -42,26 +42,24 @@ if (!fs.existsSync(dst)) {
 // ---------------------------------------------------------------------------
 
 for (const name of fs.readdirSync(src)) {
-  if (name === '.pnpm') continue
+  if (name === '.pnpm') continue;
 
-  const srcPath = path.join(src, name)
-  const isScope = name.startsWith('@') && fs.lstatSync(srcPath).isDirectory()
+  const srcPath = path.join(src, name);
+  const isScope = name.startsWith('@') && fs.lstatSync(srcPath).isDirectory();
 
-  const items = isScope
-    ? fs.readdirSync(srcPath).map((sub) => path.join(name, sub))
-    : [name]
+  const items = isScope ? fs.readdirSync(srcPath).map((sub) => path.join(name, sub)) : [name];
 
   for (const item of items) {
-    const itemPath = path.join(src, item)
+    const itemPath = path.join(src, item);
 
     if (fs.lstatSync(itemPath).isSymbolicLink()) {
-      const dstPath = path.join(dst, item)
-      const target = fs.readlinkSync(itemPath)
+      const dstPath = path.join(dst, item);
+      const target = fs.readlinkSync(itemPath);
 
       if (fs.existsSync(path.resolve(path.dirname(dstPath), target))) {
-        fs.mkdirSync(path.dirname(dstPath), { recursive: true })
-        fs.rmSync(dstPath, { recursive: true, force: true })
-        fs.symlinkSync(target, dstPath)
+        fs.mkdirSync(path.dirname(dstPath), { recursive: true });
+        fs.rmSync(dstPath, { recursive: true, force: true });
+        fs.symlinkSync(target, dstPath);
       }
     }
   }
