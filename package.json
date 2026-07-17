@@ -1,0 +1,30 @@
+{
+  "name": "nextjs-standalone-utils",
+  "version": "1.0.0",
+  "description": "Two CLI tools for filling gaps in a Next.js `output: 'standalone'` directory: include-standalone-deps traces extra CLI tools (e.g. node_modules/.bin/prisma) with @vercel/nft and copies their dependency closure, while copy-pnpm-symlinks re-creates pnpm's node_modules symlinks",
+  "type": "module",
+  "bin": {
+    "include-standalone-deps": "./include-standalone-deps.mjs",
+    "copy-pnpm-symlinks": "./copy-pnpm-symlinks.mjs"
+  },
+  "files": [
+    "include-standalone-deps.mjs",
+    "copy-pnpm-symlinks.mjs"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@vercel/nft": "^1.10.2"
+  },
+  "keywords": [
+    "nextjs",
+    "standalone",
+    "dependencies",
+    "node_modules",
+    "output-file-tracing",
+    "nft",
+    "pnpm",
+    "symlinks"
+  ]
+}
