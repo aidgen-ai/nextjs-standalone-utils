@@ -8,18 +8,19 @@
  *   include-standalone-deps [options] <path-or-glob> [<path-or-glob> ...]
  *
  * Each argument is auto-detected:
- *   - "pkg:<name>[/<subpath-or-glob>]": resolves <name> via Node module
+ *   - "pkg:<name>[:<subpath-or-glob>]": resolves <name> via Node module
  *     resolution (require.resolve(`<name>/package.json`) from --root),
  *     following symlinks to the package's real on-disk directory — this
  *     avoids hardcoding package-manager-specific store layouts (e.g. pnpm's
  *     `.pnpm/@scope+name@<version>/node_modules/@scope/name`). With no
  *     subpath, the whole resolved directory is copied (can be large for
- *     big packages); with a subpath, it is classified using the same rules
- *     as a literal path/glob below, resolved against the package directory.
- *     Resolution first tries `<name>/package.json`; if the package has a
- *     restrictive "exports" map, it falls back to resolving the main entry
- *     and walking up to find the package root. Fails only if the package has
- *     no resolvable entry point at all — use a literal node_modules path then.
+ *     big packages); with a subpath (after the second `:`), it is classified
+ *     using the same rules as a literal path/glob below, resolved against the
+ *     package directory. Resolution first tries `<name>/package.json`; if the
+ *     package has a restrictive "exports" map, it falls back to resolving the
+ *     main entry and walking up to find the package root. Fails only if the
+ *     package has no resolvable entry point at all — use a literal
+ *     node_modules path then.
  *   - existing file (or symlink to one): resolved through .bin shims
  *     (pnpm cmd-shim or symlink) and traced with @vercel/nft; the shim or
  *     symlink itself is copied too
@@ -190,11 +191,32 @@ async function classifyAbsPath(abs, label) {
 
 const PKG_PREFIX = 'pkg:';
 
-/** Split a `pkg:` specifier body into its package name and optional subpath. */
+/**
+ * Split a `pkg:` specifier body into its package name and optional subpath.
+ * Format: `<name>[:<subpath>]`
+ */
 function parsePkgSpecifier(spec) {
-  const segments = spec.split('/');
-  const pkgName = spec.startsWith('@') ? segments.slice(0, 2).join('/') : segments[0];
-  const subpath = spec.slice(pkgName.length).replace(/^\/+/, '');
+  // Format: `<name>[:<subpath>]`
+  // `:` separates the package name from the subpath; it cannot appear in a
+  // valid npm package name, so there is no ambiguity.
+  // A valid package name is either `name` or `@scope/name` — any additional
+  // `/` segment (without a preceding `:`) is the old unsupported format.
+  const colonIdx = spec.indexOf(':');
+  const pkgName = colonIdx === -1 ? spec : spec.slice(0, colonIdx);
+  const subpath = colonIdx === -1 ? '' : spec.slice(colonIdx + 1);
+
+  // Validate: scoped names may contain exactly one `/`; unscoped names none.
+  const slashCount = (pkgName.match(/\//g) ?? []).length;
+  const maxSlashes = pkgName.startsWith('@') ? 1 : 0;
+  if (slashCount > maxSlashes) {
+    console.error(
+      `error: invalid pkg: specifier "${PKG_PREFIX}${spec}" — ` +
+        `use a colon to separate the package name from the subpath, ` +
+        `e.g. pkg:${pkgName.split('/').slice(0, maxSlashes + 1).join('/')}:${pkgName.split('/').slice(maxSlashes + 1).join('/')}${subpath ? `/${subpath}` : ''}`,
+    );
+    process.exit(1);
+  }
+
   return { pkgName, subpath };
 }
 
