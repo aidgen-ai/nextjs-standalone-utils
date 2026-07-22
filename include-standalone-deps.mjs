@@ -16,8 +16,10 @@
  *     subpath, the whole resolved directory is copied (can be large for
  *     big packages); with a subpath, it is classified using the same rules
  *     as a literal path/glob below, resolved against the package directory.
- *     Resolution fails if the package has no `./package.json` export (e.g.
- *     a restrictive "exports" map) — use a literal node_modules path instead.
+ *     Resolution first tries `<name>/package.json`; if the package has a
+ *     restrictive "exports" map, it falls back to resolving the main entry
+ *     and walking up to find the package root. Fails only if the package has
+ *     no resolvable entry point at all — use a literal node_modules path then.
  *   - existing file (or symlink to one): resolved through .bin shims
  *     (pnpm cmd-shim or symlink) and traced with @vercel/nft; the shim or
  *     symlink itself is copied too
@@ -201,17 +203,47 @@ let requireFromRoot;
 /** Resolve a package's real (symlink-free) directory via Node module resolution. */
 async function resolvePkgDir(pkgName) {
   if (!requireFromRoot) requireFromRoot = createRequire(path.join(root, 'package.json'));
-  let pkgJsonPath;
+
+  // First try resolving `<pkg>/package.json` directly — works for most packages.
   try {
-    pkgJsonPath = requireFromRoot.resolve(`${pkgName}/package.json`);
+    const pkgJsonPath = requireFromRoot.resolve(`${pkgName}/package.json`);
+    return fsp.realpath(path.dirname(pkgJsonPath));
   } catch {
-    missing(
-      `could not resolve package.json of "${pkgName}" ` +
-        `(no main entry or restrictive "exports" map; use a literal node_modules path instead)`,
-    );
-    return null;
+    // Fall through: restrictive "exports" map doesn't expose "./package.json".
   }
-  return fsp.realpath(path.dirname(pkgJsonPath));
+
+  // Second try: resolve the main entry and walk up to find the package root.
+  // Works for packages with a restrictive exports map that still have a default export.
+  try {
+    const mainEntry = requireFromRoot.resolve(pkgName);
+    let dir = path.dirname(mainEntry);
+    const { root: fsRoot } = path.parse(dir);
+    while (dir !== fsRoot) {
+      if (fs.existsSync(path.join(dir, 'package.json'))) {
+        return fsp.realpath(dir);
+      }
+      dir = path.dirname(dir);
+    }
+  } catch {
+    // Fall through: no default export either.
+  }
+
+  // Last resort: scan Node's module resolution paths for the package directory
+  // directly in node_modules. Works for packages with no resolvable exports at
+  // all (e.g. pure native binary packages that aren't hoisted by the package manager).
+  const searchPaths = requireFromRoot.resolve.paths(pkgName) ?? [];
+  for (const base of searchPaths) {
+    const candidate = path.join(base, pkgName);
+    if (fs.existsSync(path.join(candidate, 'package.json'))) {
+      return fsp.realpath(candidate);
+    }
+  }
+
+  missing(
+    `could not resolve package "${pkgName}" ` +
+      `(package not found or no resolvable entry point; use a literal node_modules path instead)`,
+  );
+  return null;
 }
 
 async function classifyInput(input) {
